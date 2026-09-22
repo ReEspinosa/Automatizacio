@@ -28,7 +28,7 @@ PAGE_ID = os.getenv("PAGE_ID")
 KEYWORD = os.getenv("KEYWORD", "pisa").lower()
 
 # Enlace que se envía por DM
-REPO_LINK = os.getenv("REPO_LINK", "https://github.com/ReEspinosa/PISA-MX")
+REPO_LINK = os.getenv("REPO_LINK", "https://github.com/ReEspinosa/PISA-MX/blob/main/PISA.pdf")
 
 # Texto del DM que acompaña al enlace
 DM_MESSAGE = os.getenv("DM_MESSAGE",
