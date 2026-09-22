@@ -28,7 +28,7 @@ PAGE_ID = os.getenv("PAGE_ID")
 KEYWORD = os.getenv("KEYWORD", "pisa").lower()
 
 # Enlace que se envía por DM
-REPO_LINK = os.getenv("REPO_LINK", "https://github.com/ReEspinosa/PISA-MX/blob/main/PISA.pdf")
+REPO_LINK = os.getenv("REPO_LINK", "https://github.com/ReEspinosa/PISA-MX")
 
 # Texto del DM que acompaña al enlace
 DM_MESSAGE = os.getenv("DM_MESSAGE",
@@ -182,6 +182,76 @@ def handle_webhook():
                 logger.info(f"No contiene '{KEYWORD}', ignorando")
 
     return "OK", 200
+
+
+@app.route("/privacy", methods=["GET"])
+def privacy_policy():
+    """Política de privacidad requerida por Meta para publicar la app."""
+    html = """
+    <html>
+    <head><title>Política de Privacidad - Automatizacion</title></head>
+    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
+    <h1>Política de Privacidad</h1>
+    <p>Última actualización: 2026.</p>
+    <p>Esta aplicación ("Automatizacion") es una herramienta personal que automatiza
+    el envío de mensajes directos (DM) en Instagram como respuesta a comentarios
+    que contienen una palabra clave específica en publicaciones de la cuenta
+    propietaria de la app.</p>
+    <h2>Qué datos se procesan</h2>
+    <p>La app procesa únicamente el contenido de los comentarios públicos de
+    Instagram (texto del comentario, ID del comentario y nombre de usuario de
+    quien comenta) con el único fin de detectar la palabra clave y enviar una
+    respuesta automática. No se almacena esta información de forma permanente
+    ni se comparte con terceros.</p>
+    <h2>Uso de tokens de acceso</h2>
+    <p>Los tokens de acceso a la API de Meta se almacenan de forma segura como
+    variables de entorno del servidor y no se exponen públicamente ni se
+    comparten con terceros.</p>
+    <h2>Contacto</h2>
+    <p>Para dudas sobre esta política, contactar a: rebeca07e.r@gmail.com</p>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.route("/terms", methods=["GET"])
+def terms_of_service():
+    """Condiciones del servicio requeridas por Meta para publicar la app."""
+    html = """
+    <html>
+    <head><title>Condiciones del Servicio - Automatizacion</title></head>
+    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
+    <h1>Condiciones del Servicio</h1>
+    <p>Esta aplicación es una herramienta personal de automatización para la
+    cuenta de Instagram de su propietaria. No está destinada a uso comercial
+    por terceros. El uso de esta app está sujeto a las políticas de la
+    Plataforma de Meta.</p>
+    <p>Contacto: rebeca07e.r@gmail.com</p>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.route("/data-deletion", methods=["GET", "POST"])
+def data_deletion():
+    """Instrucciones de eliminación de datos requeridas por Meta."""
+    html = """
+    <html>
+    <head><title>Eliminación de Datos - Automatizacion</title></head>
+    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
+    <h1>Eliminación de Datos</h1>
+    <p>Esta app no almacena datos personales de forma permanente. Los
+    comentarios procesados solo se guardan temporalmente en memoria del
+    servidor para evitar respuestas duplicadas, y se eliminan automáticamente
+    al reiniciarse el servicio.</p>
+    <p>Si deseas solicitar la eliminación de cualquier dato relacionado con tu
+    interacción con esta app, escribe a: rebeca07e.r@gmail.com</p>
+    </body>
+    </html>
+    """
+    return html
 
 
 @app.route("/", methods=["GET"])
