@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ig-auto-dm
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PAGE_ACCESS_TOKEN
+        sync: false
+      - key: VERIFY_TOKEN
+        sync: false
+      - key: INSTAGRAM_ACCOUNT_ID
+        sync: false
+      - key: PAGE_ID
+        sync: false
+      - key: KEYWORD
+        sync: false
+      - key: PDF_LINK
+        sync: false
+      - key: DM_MESSAGE
+        sync: false
+      - key: BUTTON_TEXT
+        sync: false
