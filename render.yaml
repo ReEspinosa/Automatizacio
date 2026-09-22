@@ -15,7 +15,7 @@ services:
         sync: false
       - key: KEYWORD
         sync: false
-      - key: PDF_LINK
+      - key: REPO_LINK
         sync: false
       - key: DM_MESSAGE
         sync: false
