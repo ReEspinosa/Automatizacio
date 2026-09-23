@@ -1,57 +1,109 @@
 """
-Instagram Comment-to-DM Automation
-===================================
-Cuando alguien comenta "PISA" en un Reel o post de Instagram,
-se le envía automáticamente un DM privado con el enlace al repositorio de GitHub.
+Instagram Comment-to-DM (ruta: API de Instagram con inicio de sesión de Instagram)
 
-Usa la Instagram Graph API (vía Facebook Login) + Webhooks de Meta.
+Cuando alguien comenta la palabra clave en tus posts/reels, se le manda
+un DM privado (Private Reply) con tu link.
+
+Variables de entorno (Render):
+  PAGE_ACCESS_TOKEN     Token IGAA... generado en developers (Instagram Login)
+  PAGE_ID               Tu Instagram User ID (17841404548004109)
+  INSTAGRAM_ACCOUNT_ID  Tu Instagram User ID (para ignorar tus propios comentarios)
+  VERIFY_TOKEN          Texto que también pones en "Token de verificación" en Meta
+  KEYWORD               Palabra(s) clave, separadas por coma: "pisa" o "pisa,curso"
+Opcionales:
+  DM_LINK               Link que se manda (default: repo PISA-MX)
+  DM_MESSAGE            Texto del DM
+  BUTTON_TEXT           Texto del botón
+  IG_APP_SECRET         Clave secreta de la app de Instagram (valida la firma de Meta)
+  GRAPH_VERSION         Versión de la API (default: v26.0)
 """
 
-import os
+import hashlib
+import hmac
 import json
 import logging
-from flask import Flask, request, jsonify
-import requests
+import os
+import re
+import unicodedata
 
-# --- Configuración ---
+import requests
+from flask import Flask, jsonify, request
+
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# Variables de entorno (se configuran en el servidor de despliegue — NUNCA en el código)
-PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_123")
-INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID")
-PAGE_ID = os.getenv("PAGE_ID")
+# --- Configuración ---
+ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN", "")
+IG_USER_ID = os.getenv("PAGE_ID", "")
+INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID", IG_USER_ID)
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "")
+IG_APP_SECRET = os.getenv("IG_APP_SECRET", "")
+GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v26.0")
+GRAPH_API_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 
-# --- Configuración de la automatización ---
-KEYWORD = os.getenv("KEYWORD", "pisa").lower()
-
-# Enlace que se envía por DM
-REPO_LINK = os.getenv("REPO_LINK", "https://github.com/ReEspinosa/PISA-MX")
-
-# Texto del DM que acompaña al enlace
-DM_MESSAGE = os.getenv("DM_MESSAGE",
-    "¡Hola! Gracias por tu interés en PISA. Aquí tienes el repositorio con todo el análisis:"
+DM_LINK = os.getenv("DM_LINK", "https://github.com/ReEspinosa/PISA-MX")
+DM_MESSAGE = os.getenv(
+    "DM_MESSAGE",
+    "¡Hola! 👋 Gracias por comentar. Aquí tienes el repositorio con todo el análisis de PISA:",
 )
+BUTTON_TEXT = os.getenv("BUTTON_TEXT", "📂 Ver repositorio")
 
-# Texto del botón
-BUTTON_TEXT = os.getenv("BUTTON_TEXT", "Ver repositorio")
-
-# Para evitar mandar DM duplicados al mismo comentario
 processed_comments = set()
 
-# --- API de Meta ---
-GRAPH_API_URL = "https://graph.facebook.com/v26.0"
+
+# --- Detección de palabra clave ---
+def normalize(text: str) -> str:
+    """
+    Deja el texto en una forma comparable:
+    - NFKC convierte letras 'decoradas' (𝐏𝐈𝐒𝐀, 𝓅𝒾𝓈𝒶, ＰＩＳＡ) a letras normales
+    - casefold ignora mayúsculas/minúsculas (PISA, pIsa, pisA...)
+    - se quitan acentos (písa -> pisa)
+    """
+    text = unicodedata.normalize("NFKC", text).casefold()
+    text = unicodedata.normalize("NFD", text)
+    return "".join(c for c in text if unicodedata.category(c) != "Mn")
 
 
-def send_private_reply_with_button(comment_id: str) -> bool:
-    """
-    Envía un DM privado como respuesta a un comentario, con un botón
-    que abre el enlace del repositorio de GitHub.
-    """
-    url = f"{GRAPH_API_URL}/{PAGE_ID}/messages"
-    payload = {
+KEYWORDS = [normalize(k.strip()) for k in os.getenv("KEYWORD", "pisa").split(",") if k.strip()]
+# Palabra completa: detecta "pisa", "PISA!!", "quiero pisa 🙌", "#pisa"
+# pero NO "pisada", "pisar" ni "precisa"
+KEYWORD_PATTERNS = [re.compile(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])") for k in KEYWORDS]
+
+
+def contains_keyword(comment_text: str) -> bool:
+    text = normalize(comment_text)
+    return any(p.search(text) for p in KEYWORD_PATTERNS)
+
+
+# --- Seguridad: validar que el POST viene de Meta ---
+def valid_signature(req) -> bool:
+    if not IG_APP_SECRET:
+        return True  # sin secreto configurado, no se valida
+    header = req.headers.get("X-Hub-Signature-256", "")
+    if not header.startswith("sha256="):
+        return False
+    expected = hmac.new(IG_APP_SECRET.encode(), req.get_data(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(header[7:], expected)
+
+
+# --- Envío del DM ---
+def _post_message(payload: dict) -> bool:
+    url = f"{GRAPH_API_URL}/{IG_USER_ID}/messages"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        if r.ok:
+            return True
+        logger.error(f"❌ Error de Meta ({r.status_code}): {r.text}")
+    except Exception as e:
+        logger.error(f"❌ Excepción al enviar DM: {e}")
+    return False
+
+
+def send_private_reply(comment_id: str) -> bool:
+    # Intento 1: mensaje con botón
+    button_payload = {
         "recipient": {"comment_id": comment_id},
         "message": {
             "attachment": {
@@ -59,212 +111,125 @@ def send_private_reply_with_button(comment_id: str) -> bool:
                 "payload": {
                     "template_type": "button",
                     "text": DM_MESSAGE,
-                    "buttons": [
-                        {
-                            "type": "web_url",
-                            "url": REPO_LINK,
-                            "title": BUTTON_TEXT,
-                        }
-                    ],
+                    "buttons": [{"type": "web_url", "url": DM_LINK, "title": BUTTON_TEXT}],
                 },
             }
         },
     }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {PAGE_ACCESS_TOKEN}",
-    }
+    if _post_message(button_payload):
+        logger.info(f"✅ DM con botón enviado (comentario {comment_id})")
+        return True
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        data = response.json()
-
-        if response.ok:
-            logger.info(f"DM con botón enviado para comentario {comment_id}")
-            return True
-        else:
-            logger.error(f"Error al enviar DM con botón: {data}")
-            return send_private_reply_text(comment_id)
-
-    except Exception as e:
-        logger.error(f"Excepción al enviar DM con botón: {e}")
-        return send_private_reply_text(comment_id)
-
-
-def send_private_reply_text(comment_id: str) -> bool:
-    """
-    Fallback: envía el DM como texto simple con el enlace pegado.
-    Se usa si la plantilla con botón falla.
-    """
-    url = f"{GRAPH_API_URL}/{PAGE_ID}/messages"
-    full_message = f"{DM_MESSAGE}\n\n{REPO_LINK}"
-    payload = {
+    # Intento 2: texto simple con el link
+    text_payload = {
         "recipient": {"comment_id": comment_id},
-        "message": {"text": full_message},
+        "message": {"text": f"{DM_MESSAGE}\n\n{DM_LINK}"},
     }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {PAGE_ACCESS_TOKEN}",
-    }
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        data = response.json()
-        if response.ok:
-            logger.info(f"DM de texto enviado para comentario {comment_id}")
-            return True
-        else:
-            logger.error(f"Error al enviar DM de texto: {data}")
-            return False
-    except Exception as e:
-        logger.error(f"Excepción al enviar DM de texto: {e}")
-        return False
+    if _post_message(text_payload):
+        logger.info(f"✅ DM de texto enviado (comentario {comment_id})")
+        return True
+    return False
 
 
-# --- Webhook Endpoints ---
-
+# --- Webhook ---
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
-    """
-    Meta envía un GET para verificar que el servidor es real.
-    Responde con el hub.challenge si el token coincide.
-    """
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        logger.info("Webhook verificado correctamente")
+    if mode == "subscribe" and VERIFY_TOKEN and token == VERIFY_TOKEN:
+        logger.info("✅ Webhook verificado")
         return challenge, 200
-    else:
-        logger.warning("Verificación fallida — token incorrecto")
-        return "Forbidden", 403
+    logger.warning("⚠️ Verificación fallida: el token no coincide")
+    return "Forbidden", 403
 
 
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
-    """
-    Meta envía un POST cada vez que hay un nuevo comentario.
-    Filtra por la keyword y envía el DM con el link del repo.
-    """
-    data = request.get_json()
-    logger.info(f"Webhook recibido: {json.dumps(data, indent=2)}")
+    if not valid_signature(request):
+        logger.warning("⚠️ Firma inválida, se ignora el POST")
+        return "Invalid signature", 403
+
+    data = request.get_json(silent=True) or {}
+    logger.info(f"📩 Webhook recibido: {json.dumps(data, ensure_ascii=False)}")
 
     if data.get("object") != "instagram":
         return "OK", 200
 
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
-            if change.get("field") != "comments":
+            if change.get("field") not in ("comments", "live_comments"):
                 continue
 
             value = change.get("value", {})
             comment_id = value.get("id")
-            comment_text = value.get("text", "").lower()
-            commenter = value.get("from", {}).get("username", "desconocido")
-            from_id = value.get("from", {}).get("id", "")
+            text = value.get("text", "")
+            sender = value.get("from", {})
 
-            if comment_id in processed_comments:
-                logger.info(f"Comentario {comment_id} ya procesado")
+            if not comment_id or comment_id in processed_comments:
+                continue
+            if sender.get("id") == INSTAGRAM_ACCOUNT_ID:
+                logger.info("⏭️ Comentario propio, se ignora")
                 continue
 
-            if from_id == INSTAGRAM_ACCOUNT_ID:
-                logger.info("Comentario propio, saltando")
-                continue
-
-            logger.info(f"Comentario de @{commenter}: '{value.get('text', '')}'")
-
-            if KEYWORD in comment_text:
-                logger.info(f"Keyword '{KEYWORD}' detectada — enviando link del repo...")
+            logger.info(f"💬 @{sender.get('username', '?')}: {text}")
+            if contains_keyword(text):
                 processed_comments.add(comment_id)
-                send_private_reply_with_button(comment_id)
+                logger.info("🎯 Keyword detectada, enviando DM...")
+                send_private_reply(comment_id)
             else:
-                logger.info(f"No contiene '{KEYWORD}', ignorando")
+                logger.info("⏭️ Sin keyword, se ignora")
 
     return "OK", 200
 
 
+@app.route("/", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "app": "DMS comment-to-DM", "keywords": KEYWORDS})
+
+
+# --- Páginas requeridas por Meta para publicar ---
+PAGE_STYLE = 'style="font-family:sans-serif;max-width:700px;margin:40px auto;line-height:1.6;"'
+CONTACT = "rebeca07e.r@gmail.com"
+
+
 @app.route("/privacy", methods=["GET"])
 def privacy_policy():
-    """Política de privacidad requerida por Meta para publicar la app."""
-    html = """
-    <html>
-    <head><title>Política de Privacidad - Automatizacion</title></head>
-    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
-    <h1>Política de Privacidad</h1>
-    <p>Última actualización: 2026.</p>
-    <p>Esta aplicación ("Automatizacion") es una herramienta personal que automatiza
-    el envío de mensajes directos (DM) en Instagram como respuesta a comentarios
-    que contienen una palabra clave específica en publicaciones de la cuenta
-    propietaria de la app.</p>
-    <h2>Qué datos se procesan</h2>
-    <p>La app procesa únicamente el contenido de los comentarios públicos de
-    Instagram (texto del comentario, ID del comentario y nombre de usuario de
-    quien comenta) con el único fin de detectar la palabra clave y enviar una
-    respuesta automática. No se almacena esta información de forma permanente
-    ni se comparte con terceros.</p>
-    <h2>Uso de tokens de acceso</h2>
-    <p>Los tokens de acceso a la API de Meta se almacenan de forma segura como
-    variables de entorno del servidor y no se exponen públicamente ni se
-    comparten con terceros.</p>
-    <h2>Contacto</h2>
-    <p>Para dudas sobre esta política, contactar a: rebeca07e.r@gmail.com</p>
-    </body>
-    </html>
-    """
-    return html
+    return f"""<html><head><title>Política de Privacidad - DMS</title></head>
+<body {PAGE_STYLE}>
+<h1>Política de Privacidad</h1>
+<p>Esta app responde automáticamente por mensaje directo a quienes comentan una
+palabra clave en publicaciones de la cuenta de Instagram de su propietaria.</p>
+<h2>Datos que se procesan</h2>
+<p>Solo el identificador y texto del comentario, para decidir si se envía el mensaje.
+No se almacena esta información de forma permanente ni se comparte con terceros.</p>
+<h2>Tokens de acceso</h2>
+<p>Los tokens se guardan como variables de entorno del servidor y no se exponen públicamente.</p>
+<h2>Contacto</h2><p>{CONTACT}</p>
+</body></html>"""
 
 
 @app.route("/terms", methods=["GET"])
 def terms_of_service():
-    """Condiciones del servicio requeridas por Meta para publicar la app."""
-    html = """
-    <html>
-    <head><title>Condiciones del Servicio - Automatizacion</title></head>
-    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
-    <h1>Condiciones del Servicio</h1>
-    <p>Esta aplicación es una herramienta personal de automatización para la
-    cuenta de Instagram de su propietaria. No está destinada a uso comercial
-    por terceros. El uso de esta app está sujeto a las políticas de la
-    Plataforma de Meta.</p>
-    <p>Contacto: rebeca07e.r@gmail.com</p>
-    </body>
-    </html>
-    """
-    return html
+    return f"""<html><head><title>Condiciones del Servicio - DMS</title></head>
+<body {PAGE_STYLE}>
+<h1>Condiciones del Servicio</h1>
+<p>Herramienta personal de automatización para la cuenta de Instagram de su propietaria.
+Su uso está sujeto a las políticas de la Plataforma de Meta.</p>
+<p>Contacto: {CONTACT}</p>
+</body></html>"""
 
 
 @app.route("/data-deletion", methods=["GET", "POST"])
 def data_deletion():
-    """Instrucciones de eliminación de datos requeridas por Meta."""
-    html = """
-    <html>
-    <head><title>Eliminación de Datos - Automatizacion</title></head>
-    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
-    <h1>Eliminación de Datos</h1>
-    <p>Esta app no almacena datos personales de forma permanente. Los
-    comentarios procesados solo se guardan temporalmente en memoria del
-    servidor para evitar respuestas duplicadas, y se eliminan automáticamente
-    al reiniciarse el servicio.</p>
-    <p>Si deseas solicitar la eliminación de cualquier dato relacionado con tu
-    interacción con esta app, escribe a: rebeca07e.r@gmail.com</p>
-    </body>
-    </html>
-    """
-    return html
-
-
-@app.route("/", methods=["GET"])
-def health_check():
-    """Endpoint de salud para verificar que el servidor está vivo."""
-    return jsonify({
-        "status": "ok",
-        "app": "Instagram Comment-to-DM (GitHub link)",
-        "keyword": KEYWORD,
-        "repo_link": REPO_LINK,
-    })
+    return f"""<html><head><title>Eliminación de Datos - DMS</title></head>
+<body {PAGE_STYLE}>
+<h1>Eliminación de Datos</h1>
+<p>Esta app no almacena datos personales de forma permanente. Los IDs de comentarios
+procesados se guardan solo en memoria para evitar duplicados y se borran al reiniciar el servicio.</p>
+<p>Para solicitar la eliminación de cualquier dato, escribe a: {CONTACT}</p>
+</body></html>"""
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
