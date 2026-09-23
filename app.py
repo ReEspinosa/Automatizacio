@@ -14,6 +14,7 @@ Opcionales:
   DM_LINK               Link que se manda (default: repo PISA-MX)
   DM_MESSAGE            Texto del DM
   BUTTON_TEXT           Texto del botón
+  COMMENT_REPLIES       Respuestas públicas al comentario, separadas por |
   IG_APP_SECRET         Clave secreta de la app de Instagram (valida la firma de Meta)
   GRAPH_VERSION         Versión de la API (default: v26.0)
 """
@@ -23,6 +24,7 @@ import hmac
 import json
 import logging
 import os
+import random
 import re
 import unicodedata
 
@@ -42,12 +44,25 @@ IG_APP_SECRET = os.getenv("IG_APP_SECRET", "")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v26.0")
 GRAPH_API_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 
-DM_LINK = os.getenv("DM_LINK", "https://github.com/ReEspinosa/PISA-MX")
+DM_LINK = os.getenv(
+    "DM_LINK",
+    "https://drive.google.com/drive/folders/1uQIzXDYUGsg4DkG7Qdf-hlW0gKSN6lRw?usp=sharing",
+)
 DM_MESSAGE = os.getenv(
     "DM_MESSAGE",
-    "¡Hola! 👋 Gracias por comentar. Aquí tienes el repositorio con todo el análisis de PISA:",
+    "holaaa✨💕\ngraciass por tu interés en PISA, aquí tienes el drive con todo el análisis:",
 )
-BUTTON_TEXT = os.getenv("BUTTON_TEXT", "📂 Ver repositorio")
+BUTTON_TEXT = os.getenv("BUTTON_TEXT", "📂 Ver drive")
+
+# Respuestas públicas al comentario (se elige una al azar). En Render: separadas por |
+COMMENT_REPLIES = [
+    r.strip()
+    for r in os.getenv(
+        "COMMENT_REPLIES",
+        "listooo✨|listoo, revisa tus dms💕✨|listoo, checa tus mensajes🫶🏼",
+    ).split("|")
+    if r.strip()
+]
 
 processed_comments = set()
 
@@ -131,6 +146,27 @@ def send_private_reply(comment_id: str) -> bool:
     return False
 
 
+def reply_to_comment(comment_id: str) -> bool:
+    """Responde públicamente el comentario en el post/reel."""
+    if not COMMENT_REPLIES:
+        return False
+    reply = random.choice(COMMENT_REPLIES)
+    try:
+        r = requests.post(
+            f"{GRAPH_API_URL}/{comment_id}/replies",
+            data={"message": reply},
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            timeout=10,
+        )
+        if r.ok:
+            logger.info(f"💬 Comentario respondido: '{reply}'")
+            return True
+        logger.error(f"❌ Error al responder comentario ({r.status_code}): {r.text}")
+    except Exception as e:
+        logger.error(f"❌ Excepción al responder comentario: {e}")
+    return False
+
+
 # --- Webhook ---
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
@@ -175,8 +211,9 @@ def handle_webhook():
             logger.info(f"💬 @{sender.get('username', '?')}: {text}")
             if contains_keyword(text):
                 processed_comments.add(comment_id)
-                logger.info("🎯 Keyword detectada, enviando DM...")
-                send_private_reply(comment_id)
+                logger.info("Keyword detectada, enviando DM...")
+                if send_private_reply(comment_id):
+                    reply_to_comment(comment_id)
             else:
                 logger.info("⏭️ Sin keyword, se ignora")
 
