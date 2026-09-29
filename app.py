@@ -9,11 +9,8 @@ Variables de entorno (Render):
   PAGE_ID               Tu Instagram User ID (17841404548004109)
   INSTAGRAM_ACCOUNT_ID  Tu Instagram User ID (para ignorar tus propios comentarios)
   VERIFY_TOKEN          Texto que también pones en "Token de verificación" en Meta
-  KEYWORD               Palabra(s) clave, separadas por coma: "pisa" o "pisa,curso"
+  (las palabras clave, mensajes y links se configuran en CAMPAIGNS dentro de este archivo)
 Opcionales:
-  DM_LINK               Link que se manda (default: repo PISA-MX)
-  DM_MESSAGE            Texto del DM
-  BUTTON_TEXT           Texto del botón
   COMMENT_REPLIES       Respuestas públicas al comentario, separadas por |
   IG_APP_SECRET         Clave secreta de la app de Instagram (valida la firma de Meta)
   GRAPH_VERSION         Versión de la API (default: v26.0)
@@ -44,15 +41,23 @@ IG_APP_SECRET = os.getenv("IG_APP_SECRET", "")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v26.0")
 GRAPH_API_URL = f"https://graph.instagram.com/{GRAPH_VERSION}"
 
-DM_LINK = os.getenv(
-    "DM_LINK",
-    "https://drive.google.com/drive/folders/1uQIzXDYUGsg4DkG7Qdf-hlW0gKSN6lRw?usp=sharing",
-)
-DM_MESSAGE = os.getenv(
-    "DM_MESSAGE",
-    "holaaa✨💕\ngraciass por tu interés en PISA, aquí tienes el drive con todo el análisis:",
-)
-BUTTON_TEXT = os.getenv("BUTTON_TEXT", "📂 Ver drive")
+# --- Palabras clave: una entrada por campaña ---
+# Para agregar otra palabra, copia un bloque y cambia los valores.
+CAMPAIGNS = {
+    "pisa": {
+        "message": "holaaa\ngraciass por tu interés en PISA, aquí tienes el drive con todo el análisis:",
+        "link": "https://drive.google.com/drive/folders/1uQIzXDYUGsg4DkG7Qdf-hlW0gKSN6lRw?usp=sharing",
+        "button": "📂 Ver drive",
+    },
+    "curso": {
+        "message": "Listo, aquí tienes el link del Google AI Professional Certificate en Coursera 🤍",
+        "link": "https://bit.ly/3Tg8MyK",
+        "button": "Ver curso",
+    },
+    # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
+}
+# Variantes que mandan lo mismo que otra palabra
+CAMPAIGNS["cursos"] = CAMPAIGNS["curso"]
 
 # Respuestas públicas al comentario (se elige una al azar). En Render: separadas por |
 COMMENT_REPLIES = [
@@ -80,15 +85,22 @@ def normalize(text: str) -> str:
     return "".join(c for c in text if unicodedata.category(c) != "Mn")
 
 
-KEYWORDS = [normalize(k.strip()) for k in os.getenv("KEYWORD", "pisa").split(",") if k.strip()]
-# Palabra completa: detecta "pisa", "PISA!!", "quiero pisa 🙌", "#pisa"
+# Palabra completa: detecta "pisa", "PISA!!", "quiero pisa ", "#pisa"
 # pero NO "pisada", "pisar" ni "precisa"
-KEYWORD_PATTERNS = [re.compile(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])") for k in KEYWORDS]
+KEYWORD_PATTERNS = [
+    (re.compile(rf"(?<![a-z0-9]){re.escape(normalize(k))}(?![a-z0-9])"), cfg)
+    for k, cfg in CAMPAIGNS.items()
+]
+KEYWORDS = list(CAMPAIGNS.keys())
 
 
-def contains_keyword(comment_text: str) -> bool:
+def find_campaign(comment_text: str):
+    """Regresa la campaña de la primera palabra clave encontrada, o None."""
     text = normalize(comment_text)
-    return any(p.search(text) for p in KEYWORD_PATTERNS)
+    for pattern, cfg in KEYWORD_PATTERNS:
+        if pattern.search(text):
+            return cfg
+    return None
 
 
 # --- Seguridad: validar que el POST viene de Meta ---
@@ -116,7 +128,7 @@ def _post_message(payload: dict) -> bool:
     return False
 
 
-def send_private_reply(comment_id: str) -> bool:
+def send_private_reply(comment_id: str, cfg: dict) -> bool:
     # Intento 1: mensaje con botón
     button_payload = {
         "recipient": {"comment_id": comment_id},
@@ -125,8 +137,8 @@ def send_private_reply(comment_id: str) -> bool:
                 "type": "template",
                 "payload": {
                     "template_type": "button",
-                    "text": DM_MESSAGE,
-                    "buttons": [{"type": "web_url", "url": DM_LINK, "title": BUTTON_TEXT}],
+                    "text": cfg["message"],
+                    "buttons": [{"type": "web_url", "url": cfg["link"], "title": cfg["button"]}],
                 },
             }
         },
@@ -138,7 +150,7 @@ def send_private_reply(comment_id: str) -> bool:
     # Intento 2: texto simple con el link
     text_payload = {
         "recipient": {"comment_id": comment_id},
-        "message": {"text": f"{DM_MESSAGE}\n\n{DM_LINK}"},
+        "message": {"text": f"{cfg['message']}\n\n{cfg['link']}"},
     }
     if _post_message(text_payload):
         logger.info(f"✅ DM de texto enviado (comentario {comment_id})")
@@ -209,10 +221,11 @@ def handle_webhook():
                 continue
 
             logger.info(f"💬 @{sender.get('username', '?')}: {text}")
-            if contains_keyword(text):
+            cfg = find_campaign(text)
+            if cfg:
                 processed_comments.add(comment_id)
-                logger.info("Keyword detectada, enviando DM...")
-                if send_private_reply(comment_id):
+                logger.info("🎯 Keyword detectada, enviando DM...")
+                if send_private_reply(comment_id, cfg):
                     reply_to_comment(comment_id)
             else:
                 logger.info("⏭️ Sin keyword, se ignora")
