@@ -52,12 +52,30 @@ CAMPAIGNS = {
     "curso": {
         "message": "Listo, aquí tienes el link del Google AI Professional Certificate en Coursera 🤍",
         "link": "https://bit.ly/3Tg8MyK",
-        "button": "Ver curso",
+        "button": "🎓 Ver curso",
+    },
+    "fisica": {
+        # Solo para seguidores: primero pide que te sigan y luego manda el link
+        "followers_only": True,
+        "gate_message": "holaaa 🫶🏼\nla info del Nobel de Física se la mando solo a mis seguidores 💕\nsígueme y después toca el botón de abajo 👇🏼",
+        "not_following_message": "mmm aún no me aparece que me sigas 🥺\nsígueme y vuelve a tocar el botón 👇🏼",
+        "message": "graciass por seguirme 💕✨\naquí tienes la info del Premio Nobel de Física 2026:",
+        "link": "https://www.nobelprize.org/prizes/physics/2026/popular-information/",
+        "button": "⚛️ Ver info",
     },
     # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
+    # Agrega "followers_only": True (y gate_message / not_following_message)
+    # si quieres que esa palabra sea solo para seguidores.
 }
+for _key, _cfg in CAMPAIGNS.items():
+    _cfg["key"] = _key
+
 # Variantes que mandan lo mismo que otra palabra
+# (mayúsculas y acentos ya se ignoran solos: FÍSICA, Física, fisica... = "fisica")
 CAMPAIGNS["cursos"] = CAMPAIGNS["curso"]
+
+FOLLOW_BUTTON_TEXT = "✅ Ya te sigo"
+FOLLOW_PAYLOAD_PREFIX = "FOLLOW_CHECK:"
 
 # Respuestas públicas al comentario (se elige una al azar). En Render: separadas por |
 COMMENT_REPLIES = [
@@ -85,7 +103,7 @@ def normalize(text: str) -> str:
     return "".join(c for c in text if unicodedata.category(c) != "Mn")
 
 
-# Palabra completa: detecta "pisa", "PISA!!", "quiero pisa ", "#pisa"
+# Palabra completa: detecta "pisa", "PISA!!", "quiero pisa 🙌", "#pisa"
 # pero NO "pisada", "pisar" ni "precisa"
 KEYWORD_PATTERNS = [
     (re.compile(rf"(?<![a-z0-9]){re.escape(normalize(k))}(?![a-z0-9])"), cfg)
@@ -128,34 +146,88 @@ def _post_message(payload: dict) -> bool:
     return False
 
 
-def send_private_reply(comment_id: str, cfg: dict) -> bool:
-    # Intento 1: mensaje con botón
-    button_payload = {
-        "recipient": {"comment_id": comment_id},
+def _button_template(recipient: dict, text: str, button: dict) -> dict:
+    return {
+        "recipient": recipient,
         "message": {
             "attachment": {
                 "type": "template",
-                "payload": {
-                    "template_type": "button",
-                    "text": cfg["message"],
-                    "buttons": [{"type": "web_url", "url": cfg["link"], "title": cfg["button"]}],
-                },
+                "payload": {"template_type": "button", "text": text, "buttons": [button]},
             }
         },
     }
-    if _post_message(button_payload):
-        logger.info(f"✅ DM con botón enviado (comentario {comment_id})")
-        return True
 
-    # Intento 2: texto simple con el link
-    text_payload = {
-        "recipient": {"comment_id": comment_id},
-        "message": {"text": f"{cfg['message']}\n\n{cfg['link']}"},
+
+def _follow_button(cfg: dict) -> dict:
+    return {
+        "type": "postback",
+        "title": FOLLOW_BUTTON_TEXT,
+        "payload": f"{FOLLOW_PAYLOAD_PREFIX}{cfg['key']}",
     }
+
+
+def _link_button(cfg: dict) -> dict:
+    return {"type": "web_url", "url": cfg["link"], "title": cfg["button"]}
+
+
+def send_link(recipient: dict, cfg: dict) -> bool:
+    """Manda el mensaje con el botón del link (o texto simple si falla)."""
+    if _post_message(_button_template(recipient, cfg["message"], _link_button(cfg))):
+        logger.info(f"✅ DM con botón enviado ({cfg['key']})")
+        return True
+    text_payload = {"recipient": recipient, "message": {"text": f"{cfg['message']}\n\n{cfg['link']}"}}
     if _post_message(text_payload):
-        logger.info(f"✅ DM de texto enviado (comentario {comment_id})")
+        logger.info(f"✅ DM de texto enviado ({cfg['key']})")
         return True
     return False
+
+
+def send_private_reply(comment_id: str, cfg: dict) -> bool:
+    recipient = {"comment_id": comment_id}
+    if cfg.get("followers_only"):
+        # Primero se pide que te sigan; el link llega al tocar "Ya te sigo"
+        ok = _post_message(_button_template(recipient, cfg["gate_message"], _follow_button(cfg)))
+        if ok:
+            logger.info(f"✅ DM de 'sígueme' enviado ({cfg['key']}, comentario {comment_id})")
+        return ok
+    return send_link(recipient, cfg)
+
+
+# --- Verificación de seguidores ---
+def user_follows_me(igsid: str):
+    """True/False si el usuario te sigue; None si Meta no lo pudo confirmar."""
+    try:
+        r = requests.get(
+            f"{GRAPH_API_URL}/{igsid}",
+            params={"fields": "username,is_user_follow_business"},
+            headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+            timeout=10,
+        )
+        if r.ok:
+            data = r.json()
+            follows = data.get("is_user_follow_business")
+            logger.info(f"👤 @{data.get('username', '?')} te sigue: {follows}")
+            return follows
+        logger.error(f"❌ Error al revisar seguidor ({r.status_code}): {r.text}")
+    except Exception as e:
+        logger.error(f"❌ Excepción al revisar seguidor: {e}")
+    return None
+
+
+def handle_follow_check(sender_id: str, payload: str):
+    key = payload[len(FOLLOW_PAYLOAD_PREFIX):]
+    cfg = CAMPAIGNS.get(key)
+    if not cfg:
+        logger.warning(f"⚠️ Campaña desconocida en postback: {key}")
+        return
+    recipient = {"id": sender_id}
+    follows = user_follows_me(sender_id)
+    if follows is False:
+        _post_message(_button_template(recipient, cfg["not_following_message"], _follow_button(cfg)))
+        logger.info("🙅 Aún no te sigue, se le pidió de nuevo")
+        return
+    # True, o None si Meta no respondió (mejor mandarlo que dejarlo sin nada)
+    send_link(recipient, cfg)
 
 
 def reply_to_comment(comment_id: str) -> bool:
@@ -205,6 +277,15 @@ def handle_webhook():
         return "OK", 200
 
     for entry in data.get("entry", []):
+        # Botón "Ya te sigo" tocado en el DM
+        for event in entry.get("messaging", []):
+            postback = event.get("postback", {})
+            payload = postback.get("payload", "")
+            sender_id = event.get("sender", {}).get("id")
+            if payload.startswith(FOLLOW_PAYLOAD_PREFIX) and sender_id and sender_id != INSTAGRAM_ACCOUNT_ID:
+                logger.info(f"🔘 Tocaron '{postback.get('title')}' ({payload})")
+                handle_follow_check(sender_id, payload)
+
         for change in entry.get("changes", []):
             if change.get("field") not in ("comments", "live_comments"):
                 continue
