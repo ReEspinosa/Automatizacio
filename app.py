@@ -62,7 +62,7 @@ CAMPAIGNS = {
     "mexico": {
         "message": "holaaa 🫶🏼\naquí tienes los eventos de Mexico Tech Week:",
         "link": "https://www.mexicotechweek.mx/es-mx/events",
-        "button": "🇲🇽 Ver eventos",
+        "button": "Ver eventos",
     },
     # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
     # Agrega "followers_only": True (y gate_message / not_following_message)
