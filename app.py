@@ -55,13 +55,14 @@ CAMPAIGNS = {
         "button": "🎓 Ver curso",
     },
     "fisica": {
-        # Solo para seguidores: primero pide que te sigan y luego manda el link
-        "followers_only": True,
-        "gate_message": "holaaa 🫶🏼\nla info del Nobel de Física se la mando solo a mis seguidores 💕\nsígueme y después toca el botón de abajo 👇🏼",
-        "not_following_message": "mmm aún no me aparece que me sigas 🥺\nsígueme y vuelve a tocar el botón 👇🏼",
-        "message": "graciass por seguirme 💕✨\naquí tienes la info del Premio Nobel de Física 2026:",
+        "message": "holaaa 🫶🏼\naquí tienes la info del Premio Nobel de Física 2026:",
         "link": "https://www.nobelprize.org/prizes/physics/2026/popular-information/",
         "button": "⚛️ Ver info",
+    },
+    "mexico": {
+        "message": "holaaa 🫶🏼\naquí tienes los eventos de Mexico Tech Week:",
+        "link": "https://www.mexicotechweek.mx/es-mx/events",
+        "button": "🇲🇽 Ver eventos",
     },
     # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
     # Agrega "followers_only": True (y gate_message / not_following_message)
