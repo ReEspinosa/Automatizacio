@@ -64,9 +64,27 @@ CAMPAIGNS = {
         "link": "https://www.mexicotechweek.mx/es-mx/events",
         "button": "Ver eventos",
     },
+    "agenda": {
+        # Sin botón: se manda como texto para que puedan copiar el prompt
+        "message": (
+            "Aquí está! Llena lo que está entre corchetes y pégalo en tu IA favorita. "
+            "Si tu IA no puede abrir links, entra a la página, copia la lista de eventos "
+            "y pégala en lugar del link.\n\n"
+            "Voy a ir a la Mexico Tech Week 2026 en CDMX (26 de octubre al 1 de noviembre).\n"
+            "Revisa los eventos aquí: https://www.mexicotechweek.mx/es-mx/events\n\n"
+            "Mis intereses son: [ej. IA, startups, datos, biotech]\n"
+            "Mis días y horarios libres: [ej. martes a jueves, después de las 4 pm]\n"
+            "Me muevo en: [metro / auto / bici] y salgo desde: [zona o colonia]\n\n"
+            "Ármame mi agenda día por día con:\n"
+            "- nombre del evento, hora y sede\n"
+            "- por qué me conviene según mis intereses\n"
+            "- el link para registrarme\n"
+            "- que no se empalmen horarios y me dé tiempo de llegar de una sede a otra\n\n"
+            "Al final dame 2 opciones de respaldo por si alguno se llena."
+        ),
+    },
     # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
-    # Agrega "followers_only": True (y gate_message / not_following_message)
-    # si quieres que esa palabra sea solo para seguidores.
+    # Si no lleva "link" ni "button", se manda solo el texto (máx. ~1000 caracteres).
 }
 for _key, _cfg in CAMPAIGNS.items():
     _cfg["key"] = _key
@@ -173,6 +191,11 @@ def _link_button(cfg: dict) -> dict:
 
 def send_link(recipient: dict, cfg: dict) -> bool:
     """Manda el mensaje con el botón del link (o texto simple si falla)."""
+    if not cfg.get("link"):
+        ok = _post_message({"recipient": recipient, "message": {"text": cfg["message"]}})
+        if ok:
+            logger.info(f"✅ DM de texto enviado ({cfg['key']})")
+        return ok
     if _post_message(_button_template(recipient, cfg["message"], _link_button(cfg))):
         logger.info(f"✅ DM con botón enviado ({cfg['key']})")
         return True
@@ -259,16 +282,16 @@ def verify_webhook():
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     if mode == "subscribe" and VERIFY_TOKEN and token == VERIFY_TOKEN:
-        logger.info("✅ Webhook verificado")
+        logger.info(" Webhook verificado")
         return challenge, 200
-    logger.warning("⚠️ Verificación fallida: el token no coincide")
+    logger.warning(" Verificación fallida: el token no coincide")
     return "Forbidden", 403
 
 
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
     if not valid_signature(request):
-        logger.warning("⚠️ Firma inválida, se ignora el POST")
+        logger.warning("Firma inválida, se ignora el POST")
         return "Invalid signature", 403
 
     data = request.get_json(silent=True) or {}
