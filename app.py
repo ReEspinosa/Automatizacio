@@ -83,6 +83,16 @@ CAMPAIGNS = {
             "Al final dame 2 opciones de respaldo por si alguno se llena."
         ),
     },
+    "jelou": {
+        # Sin botón: se manda el texto tal cual, con el link en medio (Instagram lo hace clickeable)
+        "message": (
+            "¡Hola! 🚀 Gracias por comentar.\n\n"
+            "Aquí está el formulario para que el equipo de Jelou te cuente cómo crear tu primer "
+            "agente de IA, que atiende a tus clientes en WhatsApp y otros canales: "
+            "https://share.hsforms.com/275UJX1y3TTqnToQAn5ZJZQscew6\n\n"
+            "Llénalo y te contactan para mostrarte cómo funciona. ¡Cuéntame cómo te va!"
+        ),
+    },
     # Para agregar otra palabra, copia un bloque de arriba y cambia los valores.
     # Si no lleva "link" ni "button", se manda solo el texto (máx. ~1000 caracteres).
 }
